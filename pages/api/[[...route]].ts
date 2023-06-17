@@ -1,21 +1,65 @@
-import { App } from '@slack/bolt';
+import { App, WorkflowStep } from '@slack/bolt';
 import { NextApiRequest, NextApiResponse } from 'next';
 import NextConnectReceiver from '../../utils/NextConnectReceiver';
+import { kv } from '@vercel/kv';
 
 const receiver = new NextConnectReceiver({
     signingSecret: process.env.SLACK_SIGNING_SECRET || 'invalid',
-    // The `processBeforeResponse` option is required for all FaaS environments.
-    // It allows Bolt methods (e.g. `app.message`) to handle a Slack request
-    // before the Bolt framework responds to the request (e.g. `ack()`). This is
-    // important because FaaS immediately terminate handlers after the response.
     processBeforeResponse: true,
 });
 
-// Initializes your app with your bot token and the AWS Lambda ready receiver
 const app = new App({
     token: process.env.SLACK_BOT_TOKEN,
     receiver: receiver,
     developerMode: false,
+});
+
+async function matchMembersInChannel(channel: string, client: any) {
+    try {
+        const res = await client.conversations.members({ channel: channel });
+        const members = res.members;
+
+        const profiles = [];
+        for (const memberId of members) {
+            const profileRes: any = await client.users.profile.get({ user: memberId });
+            if (!profileRes.profile.bot_id) {
+                profiles.push({
+                    id: memberId,
+                    tzOffset: profileRes.profile.tz_offset,
+                    name: profileRes.profile.real_name,
+                });
+            }
+        }
+
+        profiles.sort((a, b) => a.tzOffset - b.tzOffset);
+
+        let outputMessage = '';
+        while (profiles.length > 1) {
+            const member1 = profiles.shift();
+            const member2 = profiles.pop();
+
+            outputMessage += `* <@${member1.id}> matched with <@${member2.id}>. <@${member1.id}>, you are in charge of scheduling the 1-1.\n`;
+        }
+
+        if (profiles.length === 1) {
+            const member = profiles[0];
+            outputMessage += `* <@${member.id}> couldn't be paired with anyone.\n`;
+        }
+
+        await client.chat.postMessage({
+            token: process.env.SLACK_BOT_TOKEN,
+            channel: channel,
+            text: outputMessage,
+        });
+    } catch (error) {
+        console.error(error);
+    }
+}
+
+app.command('/buddy_up', async ({ command, ack, client }) => {
+    await ack();
+    console.log('Buddy Up Command invoked in Channel ID: ' + command.channel_id);
+    matchMembersInChannel(command.channel_id, client);
 });
 
 // Listen for the shortcut invocation event
@@ -71,70 +115,70 @@ app.view('buddy_up_shortcut_channel_selected', async ({ ack, body, view, client 
     await ack();
 
     console.log('Buddy Up Shortcut channel Selected');
+    const selectedChannel = view.state.values.block_1.action_1.selected_conversation;
+    
+    matchMembersInChannel(selectedChannel, client);
 
-    try {
-        const selectedChannel = view.state.values.block_1.action_1.selected_conversation;
-
-        // Retrieve the list of members in the channel
-        const res = await app.client.conversations.members({ channel: selectedChannel });
-        const members = res.members;
-
-        // Retrieve each member's profile and store them in a list
-        const profiles = [];
-        for (const memberId of members) {
-            const profileRes: any = await app.client.users.profile.get({ user: memberId });
-            if (!profileRes.profile.bot_id) {
-                profiles.push({
-                    id: memberId,
-                    tzOffset: profileRes.profile.tz_offset,
-                    name: profileRes.profile.real_name,
-                });
-            }
-        }
-
-
-        // Sort the list of profiles by timezone offset
-        profiles.sort((a, b) => a.tzOffset - b.tzOffset);
-
-        // Pair up members who are farthest apart in timezone and create the output message
-        let outputMessage = '';
-        const memberInfoList = [];
-        while (profiles.length > 1) {
-            const member1 = profiles.shift(); // Get and remove the first member in the list
-            const member2 = profiles.pop(); // Get and remove the last member in the list
-
-            outputMessage += `* <@${member1.id}> matched with <@${member2.id}>. <@${member1.id}>, you are in charge of scheduling the 1-1.\n`;
-            memberInfoList.push({ name: member1.name, tzOffset: member1.tzOffset });
-            memberInfoList.push({ name: member2.name, tzOffset: member2.tzOffset });
-        }
-
-        // If there's one member left, they couldn't be paired with anyone
-        if (profiles.length === 1) {
-            const member = profiles[0];
-            outputMessage += `* <@${member.id}> couldn't be paired with anyone.\n`;
-            memberInfoList.push({ name: member.name, tzOffset: member.tzOffset });
-        }
-
-        // Send message to the channel
-        console.log('Sending message to the channel: ' + selectedChannel);
-
-        await app.client.chat.postMessage({
-            token: process.env.SLACK_BOT_TOKEN,
-            channel: selectedChannel,
-            text: outputMessage,
-        });
-    } catch (error) {
-        console.error(error);
-    }
 });
 
-// this is run just in case
+// Define the workflow step
+const buddyUpWorkflowStep = new WorkflowStep('buddy_up', {
+    edit: async ({ ack, step, configure }) => {
+        await ack();
+
+        const blocks = [
+            {
+                type: 'input',
+                block_id: 'selected_channel_block',
+                element: {
+                    type: 'conversations_select',
+                    action_id: 'selected_channel_action',
+                    placeholder: {
+                        type: 'plain_text',
+                        text: 'Select a channel',
+                        emoji: true
+                    }
+                },
+                label: {
+                    type: 'plain_text',
+                    text: 'Channel',
+                    emoji: true
+                }
+            }
+        ];
+
+        await configure({ blocks });
+    },
+    save: async ({ ack, step, view }) => {
+        await ack();
+
+        const selectedChannel = view.state.values.selected_channel_block.selected_channel_action.selected_conversation;
+
+        console.log('Setting key: ' + step.workflow_id + ' with value: ' + selectedChannel);
+
+        // Save the channel selected by the user to the Vercel KV
+        await kv.set(step.workflow_id, selectedChannel);
+    },
+    execute: async ({ step, complete, client }) => {
+        // Retrieve the selected channel from Vercel KV
+        const channel = await kv.get(step.workflow_id) as string;
+
+        console.log('Getting key: ' + step.workflow_id + ' with value: ' + channel);
+
+        // Calling the matchMembersInChannel function with selected channel and client
+        matchMembersInChannel(channel, client);
+
+        const outputs = [{ name: "message", type: "text", label: "Matched Pairs" }];
+        complete({ outputs });
+    },
+});
+
+app.step(buddyUpWorkflowStep);
+
 const router = receiver.start();
 
 router.get('/api', (req: NextApiRequest, res: NextApiResponse) => {
-    res.status(200).json({
-        test: true,
-    });
+    res.status(200).json({ test: true });
 })
 
 export default router;
