@@ -149,7 +149,7 @@ const buddyUpWorkflowStep = new WorkflowStep('buddy_up', {
 
         await configure({ blocks });
     },
-    save: async ({ ack, step, view }) => {
+    save: async ({ ack, step, update, view }) => {
         await ack();
 
         const selectedChannel = view.state.values.selected_channel_block.selected_channel_action.selected_conversation;
@@ -158,6 +158,10 @@ const buddyUpWorkflowStep = new WorkflowStep('buddy_up', {
 
         // Save the channel selected by the user to the Vercel KV
         await kv.set(step.workflow_id, selectedChannel);
+
+        const inputs = { channel: { value: selectedChannel } };
+        const outputs = [{ name: "message", type: "text", label: "Saved Workflow + Channel Link" }];
+        await update({ inputs, outputs });
     },
     execute: async ({ step, complete, client }) => {
         // Retrieve the selected channel from Vercel KV
