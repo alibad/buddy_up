@@ -66,8 +66,10 @@ async function matchMembersInChannel(channel: string, client: any) {
 
 app.command('/buddy_up', async ({ command, ack, client }) => {
     await ack();
+
     console.log('Buddy Up Command invoked in Channel ID: ' + command.channel_id);
-    matchMembersInChannel(command.channel_id, client);
+
+    await matchMembersInChannel(command.channel_id, client);
 });
 
 // Listen for the shortcut invocation event
@@ -125,7 +127,7 @@ app.view('buddy_up_shortcut_channel_selected', async ({ ack, body, view, client 
     console.log('Buddy Up Shortcut channel Selected');
     const selectedChannel = view.state.values.block_1.action_1.selected_conversation as string;
     
-    matchMembersInChannel(selectedChannel, client);
+    await matchMembersInChannel(selectedChannel, client);
 
 });
 
@@ -178,7 +180,7 @@ const buddyUpWorkflowStep = new WorkflowStep('buddy_up', {
         console.log('Getting key: ' + step.workflow_id + ' with value: ' + channel);
 
         // Calling the matchMembersInChannel function with selected channel and client
-        matchMembersInChannel(channel, client);
+        await matchMembersInChannel(channel, client);
 
         const outputs = [{ name: "message", type: "text", label: "Matched Pairs" }];
         complete({ outputs });
