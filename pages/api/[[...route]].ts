@@ -38,7 +38,9 @@ async function matchMembersInChannel(channel: string, client: any) {
             const member1 = profiles.shift();
             const member2 = profiles.pop();
 
-            outputMessage += `* <@${member1.id}> matched with <@${member2.id}>. <@${member1.id}>, you are in charge of scheduling the 1-1.\n`;
+            if (member1 && member2) {
+                outputMessage += `* <@${member1.id}> matched with <@${member2.id}>. <@${member1.id}>, you are in charge of scheduling the 1-1.\n`;
+            }
         }
 
         if (profiles.length === 1) {
@@ -115,7 +117,7 @@ app.view('buddy_up_shortcut_channel_selected', async ({ ack, body, view, client 
     await ack();
 
     console.log('Buddy Up Shortcut channel Selected');
-    const selectedChannel = view.state.values.block_1.action_1.selected_conversation;
+    const selectedChannel = view.state.values.block_1.action_1.selected_conversation as string;
     
     matchMembersInChannel(selectedChannel, client);
 
