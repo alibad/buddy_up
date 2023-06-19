@@ -16,6 +16,8 @@ const app = new App({
 
 async function matchMembersInChannel(channel: string, client: any) {
     try {
+        console.log('Triggering matching logic for Channel ID: ' + channel);
+
         const res = await client.conversations.members({ channel: channel });
         const members = res.members;
 
@@ -30,6 +32,8 @@ async function matchMembersInChannel(channel: string, client: any) {
                 });
             }
         }
+
+        console.log(profiles.length + ' user profiles found.');
 
         profiles.sort((a, b) => a.tzOffset - b.tzOffset);
 
@@ -47,6 +51,8 @@ async function matchMembersInChannel(channel: string, client: any) {
             const member = profiles[0];
             outputMessage += `* <@${member.id}> couldn't be paired with anyone.\n`;
         }
+
+        console.log('Sending matching message to Slack...');
 
         await client.chat.postMessage({
             token: process.env.SLACK_BOT_TOKEN,
